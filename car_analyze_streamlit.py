@@ -73,13 +73,13 @@ tesla_fixed = tesla_insurance + tesla_charging + tesla_refinancing + tesla_repai
 jag_repairs = np.linspace(jag_min, jag_max, granularity)
 tesla_depreciations = np.linspace(tesla_min, tesla_max, granularity)
 
-# Calculate matrix
+# Calculate matrix and round to nearest 10
 matrix = np.zeros((granularity, granularity))
 for i, tesla_dep in enumerate(tesla_depreciations):
     tesla_total = tesla_fixed + tesla_dep
     for j, jag_rep in enumerate(jag_repairs):
         jaguar_total = jaguar_fixed + 3 * jag_rep
-        matrix[i, j] = jaguar_total - tesla_total
+        matrix[i, j] = round(jaguar_total - tesla_total, -1)  # Round to nearest 10
 
 # Create two columns for the main layout
 col1, col2 = st.columns([2, 3])
@@ -89,19 +89,34 @@ with col1:
     st.subheader("Cost Difference Matrix")
     st.write("Positive values (red): Tesla is cheaper | Negative values (green): Jaguar is cheaper")
     
+    # Helper function to format numbers with 'k' for thousands
+    def format_k(val):
+        val = int(val)
+        if val >= 1000:
+            return f"{val/1000:.0f}k kr"
+        return f"{val} kr"
+    
     # Create DataFrame for heatmap
     df_heatmap = pd.DataFrame(
         matrix,
-        index=[f"{int(val):,} kr" for val in tesla_depreciations],
-        columns=[f"{int(val):,} kr/yr" for val in jag_repairs]
+        index=[format_k(val) for val in tesla_depreciations],
+        columns=[format_k(val) + "/yr" for val in jag_repairs]
     )
     
     # Create heatmap
     fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Format function for annotations in the heatmap
+    def fmt(x):
+        x = int(x)
+        if x >= 1000 or x <= -1000:
+            return f"{x/1000:.0f}k"
+        return f"{x}"
+    
     sns.heatmap(
-        matrix, annot=True, fmt=",d", cmap='RdYlGn_r', center=0,
-        xticklabels=[f"{int(j):,}" for j in jag_repairs],
-        yticklabels=[f"{int(t):,}" for t in tesla_depreciations],
+        matrix, annot=True, fmt=fmt, cmap='RdYlGn_r', center=0,
+        xticklabels=[f"{int(j/1000)}k" for j in jag_repairs],
+        yticklabels=[f"{int(t/1000)}k" for t in tesla_depreciations],
         cbar_kws={'label': 'Difference (Jaguar - Tesla, kr)'},
         linewidths=0.5, linecolor='gray', ax=ax
     )
@@ -120,13 +135,13 @@ with col1:
     selected_tesla_index = st.selectbox(
         "Tesla Depreciation",
         options=range(granularity),
-        format_func=lambda i: f"{int(tesla_depreciations[i]):,} kr"
+        format_func=lambda i: format_k(tesla_depreciations[i])
     )
     
     selected_jaguar_index = st.selectbox(
         "Jaguar Annual Repairs",
         options=range(granularity),
-        format_func=lambda i: f"{int(jag_repairs[i]):,} kr/yr"
+        format_func=lambda i: format_k(jag_repairs[i]) + "/yr"
     )
     
     # Get the selected values
@@ -144,11 +159,14 @@ with col2:
     
     # Display the winner
     winner = "Tesla Model Y is cheaper" if difference > 0 else "Jaguar I-Pace is cheaper"
-    diff_amount = abs(int(difference))
+    diff_amount = abs(int(round(difference, -1)))  # Round to nearest 10
+    
+    # Format the difference with 'k' for thousands
+    diff_display = f"{diff_amount/1000:.0f}k kr" if diff_amount >= 1000 else f"{diff_amount} kr"
     
     st.metric(
         "Cost Difference", 
-        f"{diff_amount:,} kr", 
+        diff_display, 
         delta=winner,
         delta_color="normal"
     )
@@ -171,13 +189,14 @@ with col2:
         color=bar_colors
     )
     
-    # Add value labels
+    # Add value labels with 'k' formatting
     for bar in bars:
-        height = bar.get_height()
+        height = round(bar.get_height(), -1)  # Round to nearest 10
+        height_display = f"{height/1000:.0f}k kr"
         ax.text(
             bar.get_x() + bar.get_width()/2.,
             height + 5000,
-            f'{int(height):,} kr',
+            height_display,
             ha='center',
             va='bottom'
         )
@@ -194,18 +213,25 @@ with col2:
     # Create two columns for Tesla and Jaguar breakdowns
     cost_col1, cost_col2 = st.columns(2)
     
+    # Helper function to format amounts with 'k' for thousands
+    def format_amount(val):
+        val = round(val, -1)  # Round to nearest 10
+        if val >= 1000:
+            return f"{val/1000:.0f}k"
+        return f"{val}"
+    
     with cost_col1:
         st.write("**Tesla Model Y Costs**")
         
         tesla_breakdown = {
             'Cost Category': ['Depreciation', 'Insurance', 'Charging', 'Refinancing Fee', 'Repairs', 'Total'],
             'Amount (kr)': [
-                f"{int(selected_tesla_dep):,}", 
-                f"{tesla_insurance:,}", 
-                f"{tesla_charging:,}", 
-                f"{tesla_refinancing:,}", 
-                f"{tesla_repairs:,}",
-                f"{int(tesla_total):,}"
+                format_amount(selected_tesla_dep), 
+                format_amount(tesla_insurance), 
+                format_amount(tesla_charging), 
+                format_amount(tesla_refinancing), 
+                format_amount(tesla_repairs),
+                format_amount(tesla_total)
             ],
             'Percentage': [
                 f"{selected_tesla_dep/tesla_total*100:.1f}%",
@@ -227,12 +253,12 @@ with col2:
         jaguar_breakdown = {
             'Cost Category': ['Depreciation', 'Interest', 'Insurance', 'Charging', 'Repairs (3 yrs)', 'Total'],
             'Amount (kr)': [
-                f"{jag_depreciation:,}", 
-                f"{jag_interest:,}", 
-                f"{jag_insurance:,}", 
-                f"{jag_charging:,}", 
-                f"{int(jaguar_repairs_3yr):,}",
-                f"{int(jaguar_total):,}"
+                format_amount(jag_depreciation), 
+                format_amount(jag_interest), 
+                format_amount(jag_insurance), 
+                format_amount(jag_charging), 
+                format_amount(jaguar_repairs_3yr),
+                format_amount(jaguar_total)
             ],
             'Percentage': [
                 f"{jag_depreciation/jaguar_total*100:.1f}%",
@@ -267,7 +293,8 @@ with col2:
             startangle=90,
             colors=plt.cm.Greens(np.linspace(0.2, 0.7, len(tesla_pie_data['Category'])))
         )
-        ax.set_title(f'Tesla Cost Distribution\nTotal: {int(tesla_total):,} kr')
+        total_display = f"{round(tesla_total/1000, 0):.0f}k kr"
+        ax.set_title(f'Tesla Cost Distribution\nTotal: {total_display}')
         
         st.pyplot(fig)
     
@@ -288,7 +315,8 @@ with col2:
             startangle=90,
             colors=plt.cm.Reds(np.linspace(0.2, 0.7, len(jaguar_pie_data['Category'])))
         )
-        ax.set_title(f'Jaguar Cost Distribution\nTotal: {int(jaguar_total):,} kr')
+        total_display = f"{round(jaguar_total/1000, 0):.0f}k kr"
+        ax.set_title(f'Jaguar Cost Distribution\nTotal: {total_display}')
         
         st.pyplot(fig)
 
