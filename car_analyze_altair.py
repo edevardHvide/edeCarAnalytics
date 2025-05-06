@@ -3,6 +3,14 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 
+# --- Utility Functions ---
+# Helper function to format numbers with 'k' for thousands
+def format_k_display(val):
+    val = int(val)
+    if val >= 1000:
+        return f"{val/1000:.0f}k kr"
+    return f"{val} kr"
+
 # Set page configuration
 st.set_page_config(
     page_title="Car Cost Comparison Tool",
@@ -40,7 +48,8 @@ jag_min, jag_max = st.sidebar.slider(
     max_value=100_000,
     value=(20_000, 80_000),
     step=5_000,
-    format="%d kr"
+    format=None,
+    help="Range of annual repair costs to consider"
 )
 
 tesla_min, tesla_max = st.sidebar.slider(
@@ -49,24 +58,33 @@ tesla_min, tesla_max = st.sidebar.slider(
     max_value=300_000,
     value=(80_000, 220_000),
     step=10_000,
-    format="%d kr"
+    format=None,
+    help="Range of 3-year depreciation to consider"
 )
 
 # Adjustable fixed costs
 st.sidebar.header("Fixed Costs")
+
+# Function to create number input with k-formatted display
+def k_number_input(label, default_value, step, key=None):
+    value = st.number_input(label, value=default_value, step=step, format=None, key=key)
+    return value
+
 with st.sidebar.expander("Jaguar Fixed Costs", expanded=False):
-    jag_depreciation = st.number_input("Depreciation (kr)", value=100_000, step=5000, format="%d")
-    jag_interest = st.number_input("Interest (kr)", value=33_000, step=1000, format="%d")
-    jag_insurance = st.number_input("Insurance for 3 years (kr)", value=36_000, step=1000, format="%d")
-    jag_charging = st.number_input("Charging (kr)", value=8_000, step=1000, format="%d")
+    jag_purchase = k_number_input("Purchase Price", 700_000, 50000, key="jag_purchase")
+    jag_depreciation = k_number_input("Depreciation", 70_000, 5000, key="jag_dep")
+    jag_interest = k_number_input("Interest", 33_000, 1000, key="jag_int")
+    jag_insurance = k_number_input("Insurance for 3 years", 120_000, 1000, key="jag_ins")
+    jag_charging = k_number_input("Charging", 8_000, 1000, key="jag_chg")
 
 with st.sidebar.expander("Tesla Fixed Costs", expanded=False):
-    tesla_insurance = st.number_input("Insurance for 3 years (kr)", value=30_000, step=1000, format="%d")
-    tesla_charging = st.number_input("Charging (kr)", value=6_000, step=1000, format="%d")
-    tesla_refinancing = st.number_input("Refinancing Fee (kr)", value=2_150, step=100, format="%d")
-    tesla_repairs = st.number_input("Repairs for 3 years (kr)", value=15_000, step=1000, format="%d")
+    tesla_purchase = k_number_input("Purchase Price", 700_000, 50000, key="tesla_purchase")
+    tesla_insurance = k_number_input("Insurance for 3 years", 60_000, 1000, key="tesla_ins")
+    tesla_charging = k_number_input("Charging", 6_000, 1000, key="tesla_chg")
+    tesla_refinancing = k_number_input("Refinancing Fee", 2_150, 100, key="tesla_ref")
+    tesla_repairs = k_number_input("Repairs for 3 years", 15_000, 1000, key="tesla_rep")
 
-# Calculate fixed costs
+# Calculate fixed costs (without the purchase price for the cost comparison)
 jaguar_fixed = jag_depreciation + jag_interest + jag_insurance + jag_charging
 tesla_fixed = tesla_insurance + tesla_charging + tesla_refinancing + tesla_repairs
 
@@ -74,17 +92,24 @@ tesla_fixed = tesla_insurance + tesla_charging + tesla_refinancing + tesla_repai
 jag_repairs = np.linspace(jag_min, jag_max, granularity)
 tesla_depreciations = np.linspace(tesla_min, tesla_max, granularity)
 
-# Calculate matrix
+# Calculate matrix and round to nearest 10
 matrix = np.zeros((granularity, granularity))
 for i, tesla_dep in enumerate(tesla_depreciations):
     tesla_total = tesla_fixed + tesla_dep
     for j, jag_rep in enumerate(jag_repairs):
         jaguar_total = jaguar_fixed + 3 * jag_rep
-        matrix[i, j] = jaguar_total - tesla_total
+        matrix[i, j] = round(jaguar_total - tesla_total, -1)  # Round to nearest 10
 
-# Cost Difference Matrix section (full width)
+# --- Matrix Visualization (Full Width) ---
 st.subheader("Cost Difference Matrix")
 st.write("Positive values (red): Tesla is cheaper | Negative values (blue): Jaguar is cheaper")
+
+# Format function for k-format display
+def format_k_value(val):
+    val = int(val)
+    if abs(val) >= 1000:
+        return f"{val/1000:.0f}k"
+    return f"{val}"
 
 # Create data for heatmap
 heatmap_data = []
@@ -94,7 +119,8 @@ for i, tesla_dep in enumerate(tesla_depreciations):
             'Tesla Depreciation': int(tesla_dep),
             'Jaguar Repairs': int(jag_rep),
             'Difference': matrix[i, j],
-            'Winner': 'Tesla cheaper' if matrix[i, j] > 0 else 'Jaguar cheaper'
+            'Winner': 'Tesla cheaper' if matrix[i, j] > 0 else 'Jaguar cheaper',
+            'Formatted Difference': format_k_value(matrix[i, j])
         })
 
 df_heatmap = pd.DataFrame(heatmap_data)
@@ -104,13 +130,15 @@ heatmap = alt.Chart(df_heatmap).mark_rect().encode(
     x=alt.X(
         'Jaguar Repairs:O', 
         title='Jaguar Annual Repair Costs (kr/year)', 
-        axis=alt.Axis(labelAngle=0, format=',', labelOverlap=True)
+        axis=alt.Axis(labelAngle=0, format='~s', labelOverlap=True),
+        sort=jag_repairs.astype(int).tolist()
     ),
     y=alt.Y(
         'Tesla Depreciation:O', 
         title='Tesla Depreciation over 3 years (kr)', 
         sort='descending',
-        axis=alt.Axis(format=',')
+        axis=alt.Axis(format='~s'),
+        sort=tesla_depreciations.astype(int).tolist()
     ),
     color=alt.Color(
         'Difference:Q', 
@@ -119,7 +147,8 @@ heatmap = alt.Chart(df_heatmap).mark_rect().encode(
             domain=[
                 df_heatmap['Difference'].min(),
                 df_heatmap['Difference'].max()
-            ]
+            ],
+            zero=True
         ),
         legend=alt.Legend(title='Difference (Jaguar - Tesla, kr)')
     ),
@@ -127,17 +156,16 @@ heatmap = alt.Chart(df_heatmap).mark_rect().encode(
         alt.Tooltip(
             'Tesla Depreciation:Q',
             title='Tesla Depreciation',
-            format=','
+            format='~s'
         ),
         alt.Tooltip(
             'Jaguar Repairs:Q',
             title='Jaguar Repairs/yr',
-            format=','
+            format='~s'
         ),
         alt.Tooltip(
-            'Difference:Q', 
-            title='Difference',
-            format=','
+            'Formatted Difference:N', 
+            title='Difference'
         ),
         alt.Tooltip(
             'Winner:N',
@@ -154,7 +182,7 @@ heatmap = alt.Chart(df_heatmap).mark_rect().encode(
 text = alt.Chart(df_heatmap).mark_text(baseline='middle').encode(
     x='Jaguar Repairs:O',
     y='Tesla Depreciation:O',
-    text=alt.Text('Difference:Q', format=','),
+    text='Formatted Difference:N',
     color=alt.condition(
         alt.datum.Difference > 0,
         alt.value('white'),
@@ -165,216 +193,243 @@ text = alt.Chart(df_heatmap).mark_text(baseline='middle').encode(
 # Combine and display
 st.altair_chart(heatmap + text, use_container_width=True)
 
-# Scenario selection section
+# --- Scenario Selection (Full Width) ---
 st.subheader("Select a scenario to analyze")
 
-# Use columns for the selection controls
-col1, col2 = st.columns(2)
+# Using number inputs for free value selection
+col_a, col_b = st.columns(2)
 
-with col1:
-    # Using select boxes for Tesla selection
-    selected_tesla_index = st.selectbox(
+with col_a:
+    selected_tesla_dep = st.number_input(
         "Tesla Depreciation",
-        options=range(granularity),
-        format_func=lambda i: f"{int(tesla_depreciations[i]):,} kr"
+        min_value=int(tesla_min),
+        max_value=int(tesla_max),
+        value=int(tesla_depreciations[len(tesla_depreciations)//2]),
+        step=10000,
+        format=None
     )
 
-with col2:
-    # Using select boxes for Jaguar selection
-    selected_jaguar_index = st.selectbox(
+with col_b:
+    selected_jaguar_rep = st.number_input(
         "Jaguar Annual Repairs",
-        options=range(granularity),
-        format_func=lambda i: f"{int(jag_repairs[i]):,} kr/yr"
+        min_value=int(jag_min),
+        max_value=int(jag_max),
+        value=int(jag_repairs[len(jag_repairs)//2]),
+        step=5000,
+        format=None
     )
 
-# Get the selected values
-selected_tesla_dep = tesla_depreciations[selected_tesla_index]
-selected_jaguar_rep = jag_repairs[selected_jaguar_index]
-
-# Detailed analysis section
-st.subheader("Detailed Cost Analysis")
-
+# --- Detailed Analysis ---
 # Calculate totals with the selected parameters
 tesla_total = tesla_fixed + selected_tesla_dep
 jaguar_total = jaguar_fixed + (3 * selected_jaguar_rep)
 difference = jaguar_total - tesla_total
 
-# Display the winner
-winner = "Tesla Model Y is cheaper" if difference > 0 else "Jaguar I-Pace is cheaper"
-diff_amount = abs(int(difference))
+# Helper function to format amounts with 'k' for thousands
+def format_amount(val):
+    val = round(val, -1)  # Round to nearest 10
+    if val >= 1000:
+        return f"{val/1000:.0f}k"
+    return f"{val}"
 
-col1, col2 = st.columns([1, 2])
+# Create two columns for the main detailed analysis
+col1, col2 = st.columns([1, 1])
 
+# Left column for cost difference and bar chart
 with col1:
+    st.subheader("Cost Comparison")
+    
+    # Display the winner
+    winner = "Tesla Model Y is cheaper" if difference > 0 else "Jaguar I-Pace is cheaper"
+    diff_amount = abs(int(round(difference, -1)))  # Round to nearest 10
+    
+    # Format the difference with 'k' for thousands
+    diff_display = f"{diff_amount/1000:.0f}k kr" if diff_amount >= 1000 else f"{diff_amount} kr"
+    
     st.metric(
         "Cost Difference", 
-        f"{diff_amount:,} kr", 
+        diff_display, 
         delta=winner,
         delta_color="normal"
     )
-
-# Create comparison bar chart with Altair
-st.subheader("Total 3-Year Cost Comparison")
-
-# Create a DataFrame for the bar chart
-df_costs = pd.DataFrame({
-    'Vehicle': ['Tesla Model Y', 'Jaguar I-Pace'],
-    'Total Cost': [tesla_total, jaguar_total]
-})
-
-# Create Altair bar chart
-bar_chart = alt.Chart(df_costs).mark_bar().encode(
-    x=alt.X('Vehicle:N', axis=alt.Axis(labelAngle=0)),
-    y=alt.Y('Total Cost:Q', title='Total 3-Year Cost (kr)', scale=alt.Scale(zero=True)),
-    color=alt.Color('Vehicle:N', scale=alt.Scale(domain=['Tesla Model Y', 'Jaguar I-Pace'], 
-                                               range=['green', '#ff6666'])),
-    tooltip=[
-        alt.Tooltip('Vehicle:N', title='Vehicle'),
-        alt.Tooltip('Total Cost:Q', title='Total Cost', format=',')
-    ]
-).properties(
-    width='container',
-    height=300
-)
-
-# Add text labels
-text = bar_chart.mark_text(
-    align='center',
-    baseline='bottom',
-    dy=-10,
-    fontSize=14
-).encode(
-    text=alt.Text('Total Cost:Q', format=',d')
-)
-
-# Display chart
-st.altair_chart(bar_chart + text, use_container_width=True)
-
-# Show cost breakdowns in tables
-st.subheader("Cost Breakdown")
-
-# Create two columns for Tesla and Jaguar breakdowns
-cost_col1, cost_col2 = st.columns(2)
-
-with cost_col1:
-    st.write("**Tesla Model Y Costs**")
     
-    jaguar_repairs_3yr = 3 * selected_jaguar_rep
+    # Create comparison bar chart with Altair
+    st.subheader("Total 3-Year Cost Comparison")
     
-    tesla_breakdown = {
-        'Cost Category': ['Depreciation', 'Insurance', 'Charging', 'Refinancing Fee', 'Repairs', 'Total'],
-        'Amount (kr)': [
-            f"{int(selected_tesla_dep):,}", 
-            f"{tesla_insurance:,}", 
-            f"{tesla_charging:,}", 
-            f"{tesla_refinancing:,}", 
-            f"{tesla_repairs:,}",
-            f"{int(tesla_total):,}"
-        ],
-        'Percentage': [
-            f"{selected_tesla_dep/tesla_total*100:.1f}%",
-            f"{tesla_insurance/tesla_total*100:.1f}%", 
-            f"{tesla_charging/tesla_total*100:.1f}%", 
-            f"{tesla_refinancing/tesla_total*100:.1f}%", 
-            f"{tesla_repairs/tesla_total*100:.1f}%",
-            "100%"
+    # Create a DataFrame for the bar chart
+    df_costs = pd.DataFrame({
+        'Vehicle': ['Tesla Model Y', 'Jaguar I-Pace'],
+        'Total Cost': [tesla_total, jaguar_total],
+        'Formatted Cost': [
+            f"{int(tesla_total/1000)}k kr", 
+            f"{int(jaguar_total/1000)}k kr"
         ]
-    }
-    
-    st.table(pd.DataFrame(tesla_breakdown))
-    
-    # Create pie chart data for Tesla
-    tesla_pie_data = pd.DataFrame({
-        'Category': ['Depreciation', 'Insurance', 'Charging', 'Refinancing Fee', 'Repairs'],
-        'Cost': [selected_tesla_dep, tesla_insurance, tesla_charging, tesla_refinancing, tesla_repairs]
     })
     
-    # Create donut chart for Tesla
-    tesla_pie = alt.Chart(tesla_pie_data).mark_arc().encode(
-        theta=alt.Theta(field="Cost", type="quantitative"),
-        color=alt.Color(field="Category", type="nominal", scale=alt.Scale(scheme='greens')),
+    # Create Altair bar chart
+    bar_chart = alt.Chart(df_costs).mark_bar().encode(
+        x=alt.X('Vehicle:N', axis=alt.Axis(labelAngle=0)),
+        y=alt.Y('Total Cost:Q', title='Total 3-Year Cost (kr)', scale=alt.Scale(zero=True)),
+        color=alt.Color('Vehicle:N', scale=alt.Scale(domain=['Tesla Model Y', 'Jaguar I-Pace'], 
+                                                   range=['green', '#ff6666'])),
         tooltip=[
-            alt.Tooltip("Category:N", title="Category"),
-            alt.Tooltip("Cost:Q", title="Cost", format=",.0f"),
-            alt.Tooltip("Cost:Q", title="Percentage", format=".1%")
+            alt.Tooltip('Vehicle:N', title='Vehicle'),
+            alt.Tooltip('Formatted Cost:N', title='Total Cost')
         ]
     ).properties(
-        title='Tesla Cost Distribution',
-        width=250,
-        height=250
+        width='container',
+        height=300
     )
     
-    st.altair_chart(tesla_pie, use_container_width=True)
-
-with cost_col2:
-    st.write("**Jaguar I-Pace Costs**")
-    
-    jaguar_repairs_3yr = 3 * selected_jaguar_rep
-    
-    jaguar_breakdown = {
-        'Cost Category': ['Depreciation', 'Interest', 'Insurance', 'Charging', 'Repairs (3 yrs)', 'Total'],
-        'Amount (kr)': [
-            f"{jag_depreciation:,}", 
-            f"{jag_interest:,}", 
-            f"{jag_insurance:,}", 
-            f"{jag_charging:,}", 
-            f"{int(jaguar_repairs_3yr):,}",
-            f"{int(jaguar_total):,}"
-        ],
-        'Percentage': [
-            f"{jag_depreciation/jaguar_total*100:.1f}%",
-            f"{jag_interest/jaguar_total*100:.1f}%", 
-            f"{jag_insurance/jaguar_total*100:.1f}%", 
-            f"{jag_charging/jaguar_total*100:.1f}%", 
-            f"{jaguar_repairs_3yr/jaguar_total*100:.1f}%",
-            "100%"
-        ]
-    }
-    
-    st.table(pd.DataFrame(jaguar_breakdown))
-    
-    # Create pie chart data for Jaguar
-    jaguar_pie_data = pd.DataFrame({
-        'Category': ['Depreciation', 'Interest', 'Insurance', 'Charging', 'Repairs (3 yrs)'],
-        'Cost': [jag_depreciation, jag_interest, jag_insurance, jag_charging, jaguar_repairs_3yr]
-    })
-    
-    # Create donut chart for Jaguar
-    jaguar_pie = alt.Chart(jaguar_pie_data).mark_arc().encode(
-        theta=alt.Theta(field="Cost", type="quantitative"),
-        color=alt.Color(field="Category", type="nominal", scale=alt.Scale(scheme='reds')),
-        tooltip=[
-            alt.Tooltip("Category:N", title="Category"),
-            alt.Tooltip("Cost:Q", title="Cost", format=",.0f"),
-            alt.Tooltip("Cost:Q", title="Percentage", format=".1%")
-        ]
-    ).properties(
-        title='Jaguar Cost Distribution',
-        width=250,
-        height=250
+    # Add text labels
+    text = bar_chart.mark_text(
+        align='center',
+        baseline='bottom',
+        dy=-10,
+        fontSize=14
+    ).encode(
+        text='Formatted Cost:N'
     )
     
-    st.altair_chart(jaguar_pie, use_container_width=True)
+    # Display chart
+    st.altair_chart(bar_chart + text, use_container_width=True)
 
-# Add assumptions summary
-with st.expander("Fixed Assumptions Summary", expanded=False):
-    assumptions = f"""
-    ### Jaguar Fixed Costs:
-    - Depreciation: {jag_depreciation:,} kr
-    - Interest: {jag_interest:,} kr
-    - Insurance (3 yrs): {jag_insurance:,} kr
-    - Charging: {jag_charging:,} kr
-    - **Total Fixed (excluding repairs): {jaguar_fixed:,} kr**
+# Right column for cost breakdown tables
+with col2:
+    # Show cost breakdowns in tables
+    st.subheader("Cost Breakdown")
     
-    ### Tesla Fixed Costs:
-    - Insurance (3 yrs): {tesla_insurance:,} kr
-    - Charging: {tesla_charging:,} kr
-    - Refinancing Fee: {tesla_refinancing:,} kr
-    - Repairs (3 yrs): {tesla_repairs:,} kr
-    - **Total Fixed (excluding depreciation): {tesla_fixed:,} kr**
-    """
-    st.markdown(assumptions)
+    # Create two columns for Tesla and Jaguar breakdowns
+    cost_col1, cost_col2 = st.columns(2)
+    
+    with cost_col1:
+        st.write("**Tesla Model Y Costs**")
+        
+        tesla_breakdown = {
+            'Cost Category': ['Purchase Price', 'Depreciation', 'Insurance', 'Charging', 'Refinancing Fee', 'Repairs', 'Total'],
+            'Amount (kr)': [
+                format_amount(tesla_purchase),
+                format_amount(selected_tesla_dep), 
+                format_amount(tesla_insurance), 
+                format_amount(tesla_charging), 
+                format_amount(tesla_refinancing), 
+                format_amount(tesla_repairs),
+                format_amount(tesla_total)
+            ],
+            'Percentage': [
+                "N/A",
+                f"{selected_tesla_dep/tesla_total*100:.1f}%",
+                f"{tesla_insurance/tesla_total*100:.1f}%", 
+                f"{tesla_charging/tesla_total*100:.1f}%", 
+                f"{tesla_refinancing/tesla_total*100:.1f}%", 
+                f"{tesla_repairs/tesla_total*100:.1f}%",
+                "100%"
+            ]
+        }
+        
+        st.table(pd.DataFrame(tesla_breakdown))
+    
+    with cost_col2:
+        st.write("**Jaguar I-Pace Costs**")
+        
+        jaguar_repairs_3yr = 3 * selected_jaguar_rep
+        
+        jaguar_breakdown = {
+            'Cost Category': ['Purchase Price', 'Depreciation', 'Interest', 'Insurance', 'Charging', 'Repairs (3 yrs)', 'Total'],
+            'Amount (kr)': [
+                format_amount(jag_purchase),
+                format_amount(jag_depreciation), 
+                format_amount(jag_interest), 
+                format_amount(jag_insurance), 
+                format_amount(jag_charging), 
+                format_amount(jaguar_repairs_3yr),
+                format_amount(jaguar_total)
+            ],
+            'Percentage': [
+                "N/A",
+                f"{jag_depreciation/jaguar_total*100:.1f}%",
+                f"{jag_interest/jaguar_total*100:.1f}%", 
+                f"{jag_insurance/jaguar_total*100:.1f}%", 
+                f"{jag_charging/jaguar_total*100:.1f}%", 
+                f"{jaguar_repairs_3yr/jaguar_total*100:.1f}%",
+                "100%"
+            ]
+        }
+        
+        st.table(pd.DataFrame(jaguar_breakdown))
+    
+    # Pie charts using Altair
+    st.subheader("Cost Distribution")
+    pie_col1, pie_col2 = st.columns(2)
+    
+    with pie_col1:
+        st.write("**Tesla Model Y**")
+        
+        # Create pie chart data
+        tesla_display_total = selected_tesla_dep + tesla_insurance + tesla_charging + tesla_refinancing + tesla_repairs
+        
+        tesla_pie_df = pd.DataFrame({
+            'Category': ['Depreciation', 'Insurance', 'Charging', 'Refinancing Fee', 'Repairs'],
+            'Cost': [selected_tesla_dep, tesla_insurance, tesla_charging, tesla_refinancing, tesla_repairs],
+            'Percentage': [
+                selected_tesla_dep/tesla_display_total*100,
+                tesla_insurance/tesla_display_total*100,
+                tesla_charging/tesla_display_total*100,
+                tesla_refinancing/tesla_display_total*100,
+                tesla_repairs/tesla_display_total*100
+            ]
+        })
+        
+        tesla_pie = alt.Chart(tesla_pie_df).mark_arc().encode(
+            theta=alt.Theta(field="Percentage", type="quantitative"),
+            color=alt.Color(field="Category", type="nominal", scale=alt.Scale(scheme='greens')),
+            tooltip=[
+                alt.Tooltip("Category:N", title="Category"),
+                alt.Tooltip("Cost:Q", title="Cost", format="~s"),
+                alt.Tooltip("Percentage:Q", title="Percentage", format=".1f")
+            ]
+        ).properties(
+            title=f"Tesla Ownership Cost Distribution\nTotal: {format_amount(tesla_display_total)} kr",
+            width='container',
+            height=250
+        )
+        
+        st.altair_chart(tesla_pie, use_container_width=True)
+    
+    with pie_col2:
+        st.write("**Jaguar I-Pace**")
+        
+        # Create pie chart data
+        jaguar_display_total = jag_depreciation + jag_interest + jag_insurance + jag_charging + jaguar_repairs_3yr
+        
+        jaguar_pie_df = pd.DataFrame({
+            'Category': ['Depreciation', 'Interest', 'Insurance', 'Charging', 'Repairs (3 yrs)'],
+            'Cost': [jag_depreciation, jag_interest, jag_insurance, jag_charging, jaguar_repairs_3yr],
+            'Percentage': [
+                jag_depreciation/jaguar_display_total*100,
+                jag_interest/jaguar_display_total*100,
+                jag_insurance/jaguar_display_total*100,
+                jag_charging/jaguar_display_total*100,
+                jaguar_repairs_3yr/jaguar_display_total*100
+            ]
+        })
+        
+        jaguar_pie = alt.Chart(jaguar_pie_df).mark_arc().encode(
+            theta=alt.Theta(field="Percentage", type="quantitative"),
+            color=alt.Color(field="Category", type="nominal", scale=alt.Scale(scheme='reds')),
+            tooltip=[
+                alt.Tooltip("Category:N", title="Category"),
+                alt.Tooltip("Cost:Q", title="Cost", format="~s"),
+                alt.Tooltip("Percentage:Q", title="Percentage", format=".1f")
+            ]
+        ).properties(
+            title=f"Jaguar Ownership Cost Distribution\nTotal: {format_amount(jaguar_display_total)} kr",
+            width='container',
+            height=250
+        )
+        
+        st.altair_chart(jaguar_pie, use_container_width=True)
 
 # Footer
 st.markdown("---")
-st.caption("Car Cost Comparison Tool - Made with Streamlit & Altair") 
+st.caption("Car Cost Comparison Tool - Made with Streamlit and Altair") 
