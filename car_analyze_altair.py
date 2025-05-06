@@ -130,15 +130,13 @@ heatmap = alt.Chart(df_heatmap).mark_rect().encode(
     x=alt.X(
         'Jaguar Repairs:O', 
         title='Jaguar Annual Repair Costs (kr/year)', 
-        axis=alt.Axis(labelAngle=0, format='~s', labelOverlap=True),
-        sort=jag_repairs.astype(int).tolist()
+        axis=alt.Axis(labelAngle=0, format='~s', labelOverlap=True)
     ),
     y=alt.Y(
         'Tesla Depreciation:O', 
         title='Tesla Depreciation over 3 years (kr)', 
         sort='descending',
-        axis=alt.Axis(format='~s'),
-        sort=tesla_depreciations.astype(int).tolist()
+        axis=alt.Axis(format='~s')
     ),
     color=alt.Color(
         'Difference:Q', 
